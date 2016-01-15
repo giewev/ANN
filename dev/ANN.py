@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import random
+import struct
 
 def vector_sigmoid(x):
     return 1.0 / (1 + np.exp(-x))
@@ -49,17 +50,34 @@ class Network(object):
         self.W_ij += dW_ij
         self.W_jk += dW_jk
 
-xor_samples = []
-xor_samples.append((np.array([[0,0]]), np.array([[0]])))
-xor_samples.append((np.array([[0,1]]), np.array([[1]])))
-xor_samples.append((np.array([[1,0]]), np.array([[1]])))
-xor_samples.append((np.array([[1,1]]), np.array([[0]])))
 
-xor_network = Network(2, 2, 1)
-for x in range(10000):
-    random.shuffle(xor_samples)
-    for sample in xor_samples:
-        xor_network.train(sample[0], sample[1])
+def load_labels(filename):
+    labels = []
+    with open(filename, "rb") as f:
+        magic_number = struct.unpack('>i', f.read(4))[0]
+        label_count = struct.unpack('>i', f.read(4))[0]
 
-for x in xor_samples:
-    print(x[0], xor_network.calculate(x[0]))
+        for x in range(label_count):
+            labels.append(f.read(1)[0])
+
+    return labels
+
+def load_images(filename):
+    images = []
+    with open(filename, "rb") as f:
+        magic_number = struct.unpack('>i', f.read(4))[0]
+        image_count = struct.unpack('>i', f.read(4))[0]
+        row_count = struct.unpack('>i', f.read(4))[0]
+        column_count = struct.unpack('>i', f.read(4))[0]
+
+        for x in range(image_count):
+            images.append(f.read(row_count * column_count))
+    return images
+
+
+print(len(load_labels("t10k-labels.idx1-ubyte")))
+print(len(load_labels("train-labels.idx1-ubyte")))
+
+print(len(load_images("t10k-images.idx3-ubyte")))
+print(len(load_images("train-images.idx3-ubyte")))
+print("done")
