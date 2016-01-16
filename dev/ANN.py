@@ -15,8 +15,8 @@ class Network(object):
         self.momentumFactor = 0.9
         self.M_ij = np.zeros((inputs + 1, hiddens))
         self.M_jk = np.zeros((hiddens + 1, outputs))
-        self.W_ij = np.random.rand(inputs + 1, hiddens) - 0.5
-        self.W_jk = np.random.rand(hiddens + 1, outputs) - 0.5
+        self.W_ij = scale(np.random.rand(inputs + 1, hiddens), 0, 1, -1 / (inputs ** 0.5), 1 / (inputs ** 0.5))
+        self.W_jk = scale(np.random.rand(hiddens + 1, outputs), 0, 1, -1 / (hiddens ** 0.5), 1 / (hiddens ** 0.5))
         self.activation = vector_sigmoid
         self.activation_derivative = sigmoid_derivative
 
@@ -74,10 +74,78 @@ def load_images(filename):
             images.append(f.read(row_count * column_count))
     return images
 
+def scale(value, old_min, old_max, new_min, new_max):
+	return (((value - old_min) / old_max) * new_max) + new_min
 
-print(len(load_labels("t10k-labels.idx1-ubyte")))
-print(len(load_labels("train-labels.idx1-ubyte")))
+def string_to_array(image, x_dim, y_dim):
+	arr = np.ndarray((x_dim, y_dim))
+	for x in range(x_dim):
+		for y in range(y_dim):
+			arr[x, y] = ord(image[x * y_dim + y])
+	return arr
 
-print(len(load_images("t10k-images.idx3-ubyte")))
-print(len(load_images("train-images.idx3-ubyte")))
-print("done")
+def string_to_array_flat(image):
+	# arr = np.ndarray((1, len(image)))
+	# for x in range(len(image)):
+	# 	arr[0][x] = ord(image[x])
+	# return arr
+
+	single_dim = np.fromstring(image, dtype = 'ubyte').astype('float16')
+	multi_dim = np.expand_dims(single_dim, axis=1)
+	return multi_dim.T
+
+test_labels = load_labels("t10k-labels.idx1-ubyte")
+train_labels = load_labels("train-labels.idx1-ubyte")
+
+test_images = load_images("t10k-images.idx3-ubyte")
+train_images = load_images("train-images.idx3-ubyte")
+
+net = Network(784, 300, 10)
+
+# example_image = scale(string_to_array_flat(train_images[0]), 0, 256, -1, 1)
+# example_label = np.zeros((10))
+# example_label[ord(train_labels[0])] = 1
+# net.train(example_image, example_label)
+
+# import cv2
+# for x in zip(train_images, train_labels):
+# 	cv2.imshow('image', string_to_array(x[0], 28, 28))
+# 	print(ord(x[1]))
+# 	cv2.waitKey(0)
+# 	cv2.destroyAllWindows()
+
+# correct_count = 0
+# error_count = 0
+# for x in zip(test_images, test_labels):
+# 	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
+# 	target = ord(x[1])
+
+# 	output = np.argmax(net.calculate(input_arr))
+
+# 	if target == output:
+# 		correct_count += 1
+# 	else:
+# 		error_count += 1
+# print(correct_count, error_count)
+
+
+for x in zip(train_images, train_labels):
+	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
+	target_arr = np.zeros((10))
+	target_arr[ord(x[1])] = 1
+
+	net.train(input_arr, target_arr)
+
+correct_count = 0
+error_count = 0
+for x in zip(test_images, test_labels):
+	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
+	target = ord(x[1])
+
+	output = np.argmax(net.calculate(input_arr))
+
+	if target == output:
+		correct_count += 1
+	else:
+		error_count += 1
+print(correct_count, error_count)
