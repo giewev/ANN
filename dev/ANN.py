@@ -2,6 +2,10 @@ import numpy as np
 import math
 import random
 import struct
+import time
+import sys
+from multiprocessing import Pool
+import cProfile
 
 def vector_sigmoid(x):
     return 1.0 / (1 + np.exp(-x))
@@ -12,11 +16,12 @@ def sigmoid_derivative(x):
 class Network(object):
     def __init__(self, inputs, hiddens, outputs):
         self.learning_rate = 0.1
-        self.momentumFactor = 0.9
+        self.momentumFactor = 0.1
+        self.decay_rate = 0.0001
         self.M_ij = np.zeros((inputs + 1, hiddens))
         self.M_jk = np.zeros((hiddens + 1, outputs))
-        self.W_ij = scale(np.random.rand(inputs + 1, hiddens), 0, 1, -1 / (inputs ** 0.5), 1 / (inputs ** 0.5))
-        self.W_jk = scale(np.random.rand(hiddens + 1, outputs), 0, 1, -1 / (hiddens ** 0.5), 1 / (hiddens ** 0.5))
+        self.W_ij = np.random.randn(inputs + 1, hiddens)
+        self.W_jk = np.random.randn(hiddens + 1, outputs)
         self.activation = vector_sigmoid
         self.activation_derivative = sigmoid_derivative
 
@@ -27,7 +32,11 @@ class Network(object):
         return self.activation(np.dot(hiddens_biased, self.W_jk))
 
     def train(self, inputs, targets):
-        input_biased = np.append(inputs, [[1]], axis = 1)
+        delta = self.get_delta(inputs, targets)
+        self.train_delta(delta)
+
+    def get_delta(self, inputs, targets):
+    	input_biased = np.append(inputs, [[1]], axis = 1)
         input_weighted = np.dot(input_biased, self.W_ij)
 
         hidden_signal = self.activation(np.dot(input_biased, self.W_ij))
@@ -42,13 +51,23 @@ class Network(object):
         hidden_error = output_error.sum() * self.activation_derivative(hidden_signal)
         dW_ij = np.dot(input_biased.T, hidden_error) * self.learning_rate
 
-        dW_ij += self.M_ij
-        dW_jk += self.M_jk
-        self.M_ij = self.momentumFactor * dW_ij
-        self.M_jk = self.momentumFactor * dW_jk
-        
-        self.W_ij += dW_ij
-        self.W_jk += dW_jk
+        return dW_ij, dW_jk
+
+    def get_delta_wrapped(self, data_set):
+    	return self.get_delta(data_set[0], data_set[1])
+
+    def train_delta(self, delta):
+    	dW_ij = delta[0] + self.M_ij
+    	dW_jk = delta[1] + self.M_jk
+
+    	self.M_ij = delta[0] * self.momentumFactor
+    	self.M_jk = delta[1] * self.momentumFactor
+
+    	self.W_ij += delta[0]
+    	self.W_jk += delta[1]
+
+    	# self.W_ij -= self.W_ij * self.learning_rate * self.decay_rate
+    	# self.W_jk -= self.W_jk * self.learning_rate * self.decay_rate
 
 
 def load_labels(filename):
@@ -85,27 +104,26 @@ def string_to_array(image, x_dim, y_dim):
 	return arr
 
 def string_to_array_flat(image):
-	# arr = np.ndarray((1, len(image)))
-	# for x in range(len(image)):
-	# 	arr[0][x] = ord(image[x])
-	# return arr
-
-	single_dim = np.fromstring(image, dtype = 'ubyte').astype('float16')
+	single_dim = np.fromstring(image, dtype = 'ubyte').astype('float64')
 	multi_dim = np.expand_dims(single_dim, axis=1)
 	return multi_dim.T
 
-test_labels = load_labels("t10k-labels.idx1-ubyte")
-train_labels = load_labels("train-labels.idx1-ubyte")
+def string_to_label(string):
+	label = np.zeros((10))
+	label[ord(string)] = 1
+	return label
 
-test_images = load_images("t10k-images.idx3-ubyte")
-train_images = load_images("train-images.idx3-ubyte")
+def child_print(string):
+	print(string)
+	sys.stdout.flush()
 
-net = Network(784, 300, 10)
-
-# example_image = scale(string_to_array_flat(train_images[0]), 0, 256, -1, 1)
-# example_label = np.zeros((10))
-# example_label[ord(train_labels[0])] = 1
-# net.train(example_image, example_label)
+def sum_deltas(deltas):
+	ij = deltas[0][0]
+	jk = deltas[0][1]
+	for x in range(1, len(deltas)):
+		ij += deltas[x][0]
+		jk += deltas[x][1]
+	return (ij, jk)
 
 # import cv2
 # for x in zip(train_images, train_labels):
@@ -114,38 +132,65 @@ net = Network(784, 300, 10)
 # 	cv2.waitKey(0)
 # 	cv2.destroyAllWindows()
 
-# correct_count = 0
-# error_count = 0
-# for x in zip(test_images, test_labels):
-# 	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
-# 	target = ord(x[1])
+def get_delta_picklable(args):
+	ij = args[0]
+	jk = args[1]
+	inputs = args[2]
+	outputs = args[3]
 
-# 	output = np.argmax(net.calculate(input_arr))
+	n = Network(1,1,1)
+	n.W_ij = ij
+	n.W_jk = jk
+	return n.get_delta(inputs, outputs)
 
-# 	if target == output:
-# 		correct_count += 1
-# 	else:
-# 		error_count += 1
-# print(correct_count, error_count)
+def pool_deltas(pool, network, inputs, targets):
+	ij = network.W_ij
+	jk = network.W_jk
+	data = []
+	for x in zip(inputs, targets):
+		data.append([ij, jk, x[0], x[1]])
+	return pool.map(get_delta_picklable, data)
 
+def train(h, l, m, d):
+	net = Network(784, h, 10)
+	net.learning_rate = l
+	net.momentumFactor = m
+	net.decay_rate = d
 
-for x in zip(train_images, train_labels):
-	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
-	target_arr = np.zeros((10))
-	target_arr[ord(x[1])] = 1
+	train_data = zip(train_images, train_labels)
+	test_data = zip(test_images, test_labels)
 
-	net.train(input_arr, target_arr)
+	epoch_count = 10000
+	sample_size = 1
+	epoch_per_test = 10000
 
-correct_count = 0
-error_count = 0
-for x in zip(test_images, test_labels):
-	input_arr = scale(string_to_array_flat(x[0]), 0, 256, -1, 1)
-	target = ord(x[1])
+	for epoch in range(epoch_count + 1):
+		deltas = []
+		for x in random.sample(train_data, sample_size):
+			deltas.append(net.get_delta(x[0], x[1]))
+		net.train_delta(sum_deltas(deltas))
 
-	output = np.argmax(net.calculate(input_arr))
+		if epoch % epoch_per_test == 0:
+			correct_count = 0
+			error_count = 0
+			output_counts = [0] * 10
+			for x in test_data:
+				output = net.calculate(x[0])
+				output = np.argmax(output)
+				target = np.argmax(x[1])
+				output_counts[output] += 1
 
-	if target == output:
-		correct_count += 1
-	else:
-		error_count += 1
-print(correct_count, error_count)
+				if target == output:
+					correct_count += 1
+				else:
+					error_count += 1
+			print(correct_count, error_count)
+
+if __name__ == '__main__':
+	test_labels = [string_to_label(x) for x in load_labels("t10k-labels.idx1-ubyte")]
+	train_labels = [string_to_label(x) for x in load_labels("train-labels.idx1-ubyte")]
+
+	test_images = [scale(string_to_array_flat(x), 0, 256, -1, 1) for x in load_images("t10k-images.idx3-ubyte")]
+	train_images = [scale(string_to_array_flat(x), 0, 256, -1, 1) for x in load_images("train-images.idx3-ubyte")]
+
+	train(300, 0.01, 0.9, 0.0001)
