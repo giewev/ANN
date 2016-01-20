@@ -4,9 +4,12 @@ import random
 import struct
 import time
 import sys
-from multiprocessing import Pool
+import multiprocessing
 import cProfile
 import copy
+from functools import partial
+import os
+import pickle
 
 def vector_sigmoid(x):
     return 1.0 / (1 + np.exp(-x))
@@ -112,7 +115,7 @@ def string_to_array_flat(image):
 
 def string_to_label(string):
     label = np.zeros((10))
-    label[ord(string)] = 1
+    label[string] = 1
     return label
 
 def child_print(string):
@@ -142,6 +145,15 @@ def evaluate_score_history(scores):
 
     return -1
 
+def train_many(train_data, test_data, h, l, m, d):
+    pool_size = 2
+    tasks = [d] * pool_size
+    train_part = partial(train_write, train_data, test_data, h, l, m)
+
+    p = multiprocessing.Pool(pool_size)
+    p.map(train_part, tasks)
+
+
 # import cv2
 # for x in zip(train_images, train_labels):
 #   cv2.imshow('image', string_to_array(x[0], 28, 28))
@@ -168,23 +180,36 @@ def pool_deltas(pool, network, inputs, targets):
         data.append([ij, jk, x[0], x[1]])
     return pool.map(get_delta_picklable, data)
 
-def train(h, l, m, d):
+def train_write(train_data, test_data, h, l, m, d):
+    while True:
+        x = train(train_data, test_data, h, l, m, d)
+        append = ""
+        while os.path.isfile(os.path.realpath(__file__) + "/" + str(x[1]) + append + ".txt"):
+            if append == "":
+                append = "(2)"
+            else:
+                append = "(" + str(int(append[1:-1]) + 1) + ")"
+
+        child_print(os.path.realpath(__file__))
+        f = open(os.path.realpath(__file__) + "/../" + str(x[1]) + append + ".txt", 'wb')
+        pickle.dump(x[0], f)
+        f.close()
+
+def train(train_data, test_data, h, l, m, d):
     net = Network(784, h, 10)
     net.learning_rate = l
     net.momentumFactor = m
     net.decay_rate = d
 
-    train_data = zip(train_images, train_labels)
-    test_data = zip(test_images, test_labels)
-
-    epoch_count = 600000
     sample_size = 1
     epoch_per_test = 10000
 
     score_history = []
     version_history = []
+    rollback_counter = 0
+    epoch = 0
 
-    for epoch in range(epoch_count + 1):
+    while True:
         deltas = []
         for x in random.sample(train_data, sample_size):
             deltas.append(net.get_delta(x[0], x[1]))
@@ -207,19 +232,28 @@ def train(h, l, m, d):
                     correct_count += 1
                 else:
                     error_count += 1
-            print(correct_count, error_count)
+            child_print((correct_count, error_count))
             score_history.append(correct_count / float(correct_count + error_count))
             version_history.append(copy.deepcopy(net))
 
             evaluation = evaluate_score_history(score_history)
             if evaluation == -1:
-                print("Network stagnated, ending training")
-                return
+                child_print("Network stagnated, ending training")
+                return (net, max(score_history))
+                continue
             elif evaluation != None:
                 score_history = score_history[:evaluation+1]
                 version_history = version_history[:evaluation+1]
                 net = version_history[-1]
-                print("Network performance decreased, rolling back. Current score: " + str(score_history[-1]))
+                rollback_counter += 1
+                if rollback_counter < 10:
+                    child_print("Network performance decreased, rolling back. Current score: " + str(score_history[-1]))
+                else:
+                    return (net, max(score_history))
+                    continue
+            else:
+                rollback_counter = 0
+        epoch += 1
 
 
 
@@ -230,5 +264,5 @@ if __name__ == '__main__':
     test_images = [scale(string_to_array_flat(x), 0, 256, -1, 1) for x in load_images("t10k-images.idx3-ubyte")]
     train_images = [scale(string_to_array_flat(x), 0, 256, -1, 1) for x in load_images("train-images.idx3-ubyte")]
 
-    train(300, 0.1, 0.9, 0)
+    train_many(list(zip(train_images, train_labels)), list(zip(test_images, test_labels)), 10, 0.1, 0.9, 0)
 
