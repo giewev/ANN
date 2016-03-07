@@ -111,8 +111,8 @@ class DeepNetwork(object):
         for x in zip(layer_sizes[:-1], layer_sizes[1:]):
             self.weights.append(np.random.randn(x[0] + 1, x[1]) / (x[0] ** 0.5))
             self.momentums.append(np.zeros((x[0] + 1, x[1]), dtype=np.float64))
-        self.activation = vector_tanh
-        self.activation_derivative = tanh_derivative
+        self.activation = vector_sigmoid
+        self.activation_derivative = sigmoid_derivative
 
     def calculate(self, inputs):
         outputs = inputs
@@ -165,7 +165,10 @@ def load_labels(filename):
         label_count = struct.unpack('>i', f.read(4))[0]
 
         for x in range(label_count):
-            labels.append(f.read(1)[0])
+            next = f.read(1)[0]
+            if type(next) != chr:
+                next = chr(next)
+            labels.append(next)
 
     return labels
 
@@ -240,7 +243,7 @@ def train_many(train_data, test_data, h, l, m, d):
     p.map(train_part, tasks)
 
 def train_many_deep(train_data, test_data, layer_sizes, l, m, d):
-    pool_size = multiprocessing.cpu_count() / 2
+    pool_size = 1
     tasks = [d] * pool_size
     train_part = partial(train_write_deep, train_data, test_data, layer_sizes, l, m)
 
@@ -434,6 +437,6 @@ if __name__ == '__main__':
     # print(variance(train_images))
     # print(average(train_images))
 
-    train_many_deep(list(zip(train_images, train_labels)), list(zip(test_images, test_labels)), (784, 100, 10), 0.01, 0, 0)
+    train_many_deep(list(zip(train_images, train_labels)), list(zip(test_images, test_labels)), (784, 100, 10), 0.1, 0, 0)
     # train_once(list(zip(train_images, train_labels)), 300, 0.1, 0, 0)
 
